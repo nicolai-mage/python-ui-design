@@ -1,2 +1,2 @@
 # python-ui-design
-My python based applications focusing on user-experience, user-interface design and functionality. 
+My python-based applications showcasing UI design, user experience, and interface functionality.
