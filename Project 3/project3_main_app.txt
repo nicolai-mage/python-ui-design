@@ -1,0 +1,280 @@
+import sys
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QMessageBox
+)
+# Importing the UI I just made
+from ui_home_purchase import Ui_MainWindow
+
+# Constants for calculating payments
+ANNUAL_RATE = 0.07
+LOAN_TERM_MONTHS = 120
+MONTHLY_RATE = ANNUAL_RATE / 12
+
+class HomePurchaseApp(QMainWindow):
+    def __init__(self):
+       # Used to construct the main application 
+        super().__init__()
+        
+        # Setting up the UI from the generated file
+        self.ui = Ui_MainWindow() 
+        # Call setupUi to build the interface
+        self.ui.setupUi(self)
+        
+        # This will hold data from houseprice.txt
+        self.house_prices = {}
+        
+        # Setup functions
+        self.load_house_prices()
+        self.setup_ui_defaults()
+        self.connect_signals()
+        
+        
+        # Display the window
+        self.show()
+
+    def load_house_prices(self):
+       
+        # Reads the 'houseprice.txt' file and stores data in the self.house_prices dictionary.
+        try:
+            with open("houseprice.txt", "r") as f:
+                for line in f:
+                    if ":" in line:
+                        key, value = line.strip().split(":")
+                        self.house_prices[key] = float(value)
+            
+            if not self.house_prices:
+                self.show_message("Data Error", "houseprice.txt is empty.", "critical")
+                
+        except FileNotFoundError:
+            self.show_message("Error", 
+                              "houseprice.txt not found. Please add it to the directory.", 
+                              "critical")
+        except Exception as e:
+            self.show_message("Error", f"Could not load prices: {e}", "critical")
+
+    def setup_ui_defaults(self):
+       # Populate the combo box and set default selections 
+        self.ui.combo_house_type.addItems([
+            "Apartment", 
+            "Townhouse", 
+            "Single-Family Home", 
+            "Luxury Villa"
+        ])
+        self.ui.radio_standard.setChecked(True)
+
+    def connect_signals(self):
+        # Connects all buttons and widgets to their respective functions. Must use self.ui to do this. 
+		
+        self.ui.btn_purchase.clicked.connect(self.purchase_clicked)
+        self.ui.btn_show_payments.clicked.connect(self.show_payments_clicked)
+        self.ui.btn_clear.clicked.connect(self.clear_clicked)
+        self.ui.btn_exit.clicked.connect(self.exit_clicked)
+        
+        # Tab Change
+        self.ui.tabWidget.currentChanged.connect(self.tab_changed)
+
+    # Button Click Functions 
+
+    def purchase_clicked(self):
+        # Handles the 'Purchase' button click. Validates all inputs and writes data to 'purchases_made.txt'.
+		
+        if not self.validate_all_inputs():
+            return
+
+        # Get all values from the form
+        name = self.ui.line_name.text()
+        age = self.ui.line_age.text()
+        house_type = self.ui.combo_house_type.currentText()
+        model = self.get_selected_model()
+        down_payment = self.ui.line_down_payment.text()
+
+        # Format the data for the file
+        line_to_write = (
+            f"Name: {name}, Age: {age}, House: {house_type}, "
+            f"Model: {model}, Down Payment: ${down_payment}\n"
+        )
+
+        # Append it to the external file
+        try:
+            with open("purchases_made.txt", "a") as f:
+                f.write(line_to_write)
+            
+            self.show_message("Success", "Purchase recorded successfully!")
+            self.clear_clicked()
+            
+        except Exception as e:
+            self.show_message("File Error", f"Could not write to file: {e}", "critical")
+
+    def show_payments_clicked(self):
+        # Handles the 'Show Payments' button click. Calculates and displays the monthly amortization schedule.
+		
+        self.ui.list_payments.clear()
+
+        try:
+            down_payment = float(self.ui.line_down_payment.text())
+        except ValueError:
+            self.show_message("Input Error", "Down Payment must be a valid number.")
+            return
+
+        total_price = self.calculate_total_price()
+        if total_price == 0:
+            self.show_message("Data Error", "Could not find price for the selected house.")
+            return
+            
+        if down_payment >= total_price:
+            self.ui.list_payments.addItem("Paid in full. No loan needed.")
+            return
+            
+        loan_amount = total_price - down_payment
+
+        try:
+            m_rate_pow = (1 + MONTHLY_RATE) ** LOAN_TERM_MONTHS
+            monthly_payment = (
+                loan_amount * MONTHLY_RATE * m_rate_pow / (m_rate_pow - 1)
+            )
+        except ZeroDivisionError:
+            self.show_message("Math Error", "Could not calculate payment. Check rates.")
+            return
+
+        # Add header to the list box
+        header = f"{'Month':<10} | {'Payment':<15} | {'Remaining Balance':<20}"
+        self.ui.list_payments.addItem(header)
+        self.ui.list_payments.addItem("-" * (len(header) + 2))
+
+        remaining_balance = loan_amount
+        for month in range(1, LOAN_TERM_MONTHS + 1):
+            interest_paid = remaining_balance * MONTHLY_RATE
+            principal_paid = monthly_payment - interest_paid
+            remaining_balance -= principal_paid
+            
+            if remaining_balance < 0.01:
+                remaining_balance = 0.0
+
+            line = (
+                f"{month:<10} | ${monthly_payment:<14.2f} | "
+                f"${remaining_balance:<19.2f}"
+            )
+            self.ui.list_payments.addItem(line)
+            
+            if remaining_balance == 0.0:
+                break
+
+    def clear_clicked(self):
+        # Create the clear button and its functions so it clears all input fields and resets selections.
+        self.ui.line_name.clear()
+        self.ui.line_age.clear()
+        self.ui.line_down_payment.clear()
+        self.ui.combo_house_type.setCurrentIndex(0)
+        self.ui.radio_standard.setChecked(True)
+        self.ui.list_payments.clear()
+
+    def exit_clicked(self):
+        # Create the exit button so it closes the application.
+        self.close()
+
+    # Other Event Functions
+
+    def tab_changed(self, index):
+        # For when the user clicks on a tab.
+        
+        if index == 1: # "Purchases Made" tab
+            self.load_purchases_list()
+
+    def load_purchases_list(self):
+        # Reads 'purchases_made.txt' and displays all entries in the list box on the second tab.
+        self.ui.list_purchases.clear()
+        
+        try:
+            with open("purchases_made.txt", "r") as f:
+                purchases = f.readlines()
+                if not purchases:
+                    self.ui.list_purchases.addItem("No purchases have been recorded yet.")
+                else:
+                    for line in purchases:
+                        self.ui.list_purchases.addItem(line.strip())
+                        
+        except FileNotFoundError:
+            self.ui.list_purchases.addItem("No purchases have been recorded yet.")
+        except Exception as e:
+            self.show_message("File Error", f"Could not read purchases: {e}", "warning")
+
+    # Setup the helper functions 
+
+    def validate_all_inputs(self):
+        # Checks all input fields. If any are empty, shows a warning message and returns False.
+        
+        if not self.ui.line_name.text():
+            self.show_message("Input Error", "Please enter a customer name.")
+            return False
+            
+        if not self.ui.line_age.text():
+            self.show_message("Input Error", "Please enter a customer age.")
+            return False
+            
+        if not self.ui.line_down_payment.text():
+            self.show_message("Input Error", "Please enter a down payment.")
+            return False
+            
+        try:
+            int(self.ui.line_age.text())
+        except ValueError:
+            self.show_message("Input Error", "Age must be a valid whole number.")
+            return False
+            
+        try:
+            float(self.ui.line_down_payment.text())
+        except ValueError:
+            self.show_message("Input Error", "Down Payment must be a valid number.")
+            return False
+
+        return True
+
+    def get_selected_model(self):
+        # Returns the string name of the selected radio button.
+		
+        if self.ui.radio_smart.isChecked():
+            return "Smart"
+        elif self.ui.radio_luxury.isChecked():
+            return "Luxury"
+        else:
+            return "Standard"
+
+    def calculate_total_price(self):
+        # Gets the base price from the dictionary and applies the model-based price adjustment.
+        
+        selected_house = self.ui.combo_house_type.currentText()
+        base_price = self.house_prices.get(selected_house, 0)
+        
+        if base_price == 0:
+            return 0 
+
+        model = self.get_selected_model()
+        
+        if model == "Smart":
+            total_price = base_price * 1.15
+        elif model == "Luxury":
+            total_price = base_price * 1.20
+        else:
+            total_price = base_price
+            
+        return total_price
+
+    def show_message(self, title, message, icon="info"):
+        # Create a helper function to show a standard QMessageBox (for when the fields are not correctly inputted)
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle(title)
+        msg_box.setText(message)
+        
+        if icon == "warning":
+            msg_box.setIcon(QMessageBox.Icon.Warning)
+        elif icon == "critical":
+            msg_box.setIcon(QMessageBox.Icon.Critical)
+        else:
+            msg_box.setIcon(QMessageBox.Icon.Information)
+            
+        msg_box.exec()
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = HomePurchaseApp()
+    sys.exit(app.exec())

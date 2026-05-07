@@ -1,0 +1,3 @@
+Name: Nicolai Mage, Age: 21, House: Apartment, Model: Standard, Down Payment: $500
+Name: bob, Age: 37, House: Single-Family Home, Model: Luxury, Down Payment: $55000
+Name: Nicolai mage, Age: 22, House: Luxury Villa, Model: Luxury, Down Payment: $650
